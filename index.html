@@ -43,6 +43,7 @@ button.s{padding:5px 9px;font-size:13px}
 <div class="chips" id="chips"></div>
 <div class="bar">
   <button class="g s" id="refresh">↻ Refresh</button>
+  <button class="g s" id="px">⚙ Proxy</button>
   <button class="g s" id="notif">🔔 Enable notifications</button>
   <label class="sub">Every
     <select id="intv"><option value="15">15s</option><option value="30" selected>30s</option><option value="60">1m</option><option value="300">5m</option></select>
@@ -51,11 +52,14 @@ button.s{padding:5px 9px;font-size:13px}
 </div>
 <div class="card" id="syncbox"></div>
 <div id="list"></div>
+<p class="note"><b>Data proxy:</b> public proxies are unreliable. For stable prices, create a free Cloudflare Worker (dash.cloudflare.com → Workers &amp; Pages → Create → Hello World → Edit code), paste the code below, Deploy, then tap ⚙ Proxy and paste the worker URL.</p>
+<pre class="note" style="white-space:pre-wrap;background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:10px;user-select:all">export default{async fetch(req){const u=new URL(req.url).searchParams.get("url");if(!u||!/^https:\/\/query[12]\.finance\.yahoo\.com\//.test(u))return new Response("bad request",{status:400});const r=await fetch(u,{headers:{"User-Agent":"Mozilla/5.0"}});return new Response(r.body,{status:r.status,headers:{"Access-Control-Allow-Origin":"*","Content-Type":"application/json"}})}}</pre>
 <p class="note">Symbols: US → AAPL, TSLA · India NSE → RELIANCE.NS, TCS.NS · BSE → RELIANCE.BO · Indices → ^NSEI (Nifty 50), ^BSESN (Sensex), ^NSEBANK, ^GSPC, ^DJI, ^IXIC, ^FTSE, ^N225, ^HSI, ^GDAXI. Data: Yahoo Finance (free, may be delayed up to 15 min). Alerts fire only while this page is open. Sync uses your own free Firebase database: anyone with your sync code can view your watchlist, so keep it private.</p>
 
 <script>
 const PRESETS=[["^NSEI","Nifty 50"],["^BSESN","Sensex"],["^NSEBANK","Bank Nifty"],["^GSPC","S&P 500"],["^DJI","Dow"],["^IXIC","Nasdaq"],["^FTSE","FTSE 100"],["^N225","Nikkei"],["^HSI","Hang Seng"],["^GDAXI","DAX"],["RELIANCE.NS","Reliance"],["TCS.NS","TCS"],["AAPL","Apple"],["NVDA","Nvidia"]];
-const PROXIES=[u=>"https://corsproxy.io/?url="+encodeURIComponent(u),u=>"https://api.allorigins.win/raw?url="+encodeURIComponent(u)];
+const enc=encodeURIComponent;
+const PX=[u=>"https://api.allorigins.win/get?url="+enc(u),u=>"https://api.codetabs.com/v1/proxy?quest="+enc(u),u=>"https://corsproxy.io/?url="+enc(u),u=>"https://thingproxy.freeboard.io/fetch/"+u];
 const $=s=>document.querySelector(s);
 let S=[];let timer;
 try{S=JSON.parse(localStorage.getItem("watch")||"[]")}catch(e){}
@@ -101,16 +105,16 @@ function renderSync(){
 async function enableSync(){
   let u=prompt("Paste your Firebase Realtime Database URL (e.g. https://myapp-default-rtdb.firebaseio.com). See setup steps below the page.");
   if(!u)return;
-  u=u.trim().replace(/^https?:\/\//,"").replace(/\/+$/,"");
+  u=u.trim().replace(/^https?:\/\//,"").split("/")[0];
   if(!/firebase(io|database)\.(com|app)$/.test(u)){alert("That doesn't look like a Firebase database URL.");return}
   const code=Array.from(crypto.getRandomValues(new Uint8Array(12)),b=>b.toString(36).padStart(2,"0")).join("").slice(0,20);
   const key=u+"/sync/"+code;
   try{
     if(!ts)ts=Date.now();
     const r=await fetch("https://"+key+".json",{method:"PUT",body:JSON.stringify({ts,items:items()})});
-    if(!r.ok)throw 0;
+    if(!r.ok){const t=(await r.text()).slice(0,200);throw new Error("HTTP "+r.status+": "+t)}
     syncId=key;saveLocal();setSync("Synced");renderSync();
-  }catch(e){alert("Couldn't write to that database. Check the URL and that the rules from the setup steps are published.")}
+  }catch(e){alert("Sync setup failed.\n\nDetails: "+(e&&e.message?e.message:"network error / blocked (check URL, ad-blocker, connection)")+"\n\nURL used: https://"+key+".json")}
 }
 async function linkDevice(){
   const key=$("#code").value.trim().replace(/^https?:\/\//,"");if(!key)return;
@@ -123,15 +127,22 @@ async function linkDevice(){
 }
 function stopSync(){syncId="";saveLocal();renderSync()}
 
+function parseQ(j){const m=j&&j.chart&&j.chart.result&&j.chart.result[0]&&j.chart.result[0].meta;
+  return m&&m.regularMarketPrice!=null?{price:m.regularMarketPrice,prev:m.chartPreviousClose||m.previousClose,cur:m.currency,name:m.shortName||m.longName,state:m.marketState,ex:m.exchangeName}:null}
+async function tryFetch(u){
+  const c=new AbortController(),t=setTimeout(()=>c.abort(),8000);
+  try{const r=await fetch(u,{signal:c.signal});if(!r.ok)return null;
+    let j=JSON.parse(await r.text());if(j&&typeof j.contents==="string")j=JSON.parse(j.contents);return parseQ(j)}
+  catch(e){return null}finally{clearTimeout(t)}
+}
 async function fetchQuote(sym){
-  const url=`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`;
-  for(const p of PROXIES){
-    try{
-      const r=await fetch(p(url));if(!r.ok)continue;
-      const j=await r.json();const m=j.chart&&j.chart.result&&j.chart.result[0]&&j.chart.result[0].meta;
-      if(m&&m.regularMarketPrice!=null)return{price:m.regularMarketPrice,prev:m.chartPreviousClose||m.previousClose,cur:m.currency,name:m.shortName||m.longName||sym,state:m.marketState,ex:m.exchangeName};
-    }catch(e){}
-  }
+  const y=h=>`https://${h}.finance.yahoo.com/v8/finance/chart/${enc(sym)}?interval=1d&range=1d`;
+  const custom=(localStorage.getItem("proxy")||"").trim().replace(/\/+$/,"");
+  const tries=[];
+  if(custom)tries.push(()=>custom+"?url="+enc(y("query1")),()=>custom+"?url="+enc(y("query2")));
+  PX.forEach(p=>tries.push(()=>p(y("query1"))));
+  PX.slice(0,2).forEach(p=>tries.push(()=>p(y("query2"))));
+  for(const f of tries){const q=await tryFetch(f());if(q){q.name=q.name||sym;return q}}
   return null;
 }
 function fmt(n,c){if(n==null)return"–";return(c?c+" ":"")+n.toLocaleString(undefined,{maximumFractionDigits:2})}
@@ -195,12 +206,13 @@ function render(){
 async function addSym(sym){
   sym=sym.trim().toUpperCase();if(!sym||S.some(s=>s.sym===sym))return;
   const q=await fetchQuote(sym);
-  if(!q){alert("Couldn't find '"+sym+"'. Check the symbol format (e.g. RELIANCE.NS, AAPL, ^NSEI).");return}
+  if(!q){alert("Couldn't get a price for '"+sym+"'. Either the symbol is wrong, or the free public data proxies are blocked/busy. If AAPL also fails, tap ⚙ Proxy and set up your own free Cloudflare Worker (steps below the page).");return}
   S.push({sym,alerts:[],...q});save();render();
 }
 $("#add").onclick=()=>{addSym($("#sym").value);$("#sym").value=""};
 $("#sym").addEventListener("keydown",e=>{if(e.key==="Enter")$("#add").click()});
 $("#refresh").onclick=refresh;
+$("#px").onclick=()=>{const v=prompt("Your Cloudflare Worker URL (leave empty to use free public proxies):",localStorage.getItem("proxy")||"");if(v!==null){localStorage.setItem("proxy",v.trim());refresh()}};
 $("#notif").onclick=async()=>{if(!("Notification"in window))return alert("Notifications not supported here.");const p=await Notification.requestPermission();$("#notif").textContent=p==="granted"?"🔔 Notifications on":"🔕 Blocked"};
 $("#intv").onchange=()=>{clearInterval(timer);timer=setInterval(refresh,$("#intv").value*1000)};
 PRESETS.forEach(([s,n])=>{const c=document.createElement("span");c.className="chip";c.textContent=n;c.onclick=()=>addSym(s);$("#chips").appendChild(c)});
