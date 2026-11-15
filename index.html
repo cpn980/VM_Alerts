@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stock Alert Tracker</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--tx:#14171c;--mu:#6b7280;--bd:#e3e6ea;--up:#0a8f4e;--dn:#d63a3a;--ac:#2563eb}
+@media(prefers-color-scheme:dark){:root{--bg:#0e1116;--card:#171b22;--tx:#e8ebf0;--mu:#8b93a1;--bd:#262c36;--up:#35c47c;--dn:#ff6b6b;--ac:#5b8def}}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--tx);padding:12px;max-width:900px;margin:auto}
+h1{font-size:20px;margin:6px 0}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+input,select,button{font:inherit;padding:9px 10px;border-radius:8px;border:1px solid var(--bd);background:var(--card);color:var(--tx)}
+button{cursor:pointer;background:var(--ac);color:#fff;border:0}
+button.g{background:var(--card);color:var(--tx);border:1px solid var(--bd)}
+button.s{padding:5px 9px;font-size:13px}
+#sym{flex:1;min-width:150px}
+.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
+.chip{white-space:nowrap;font-size:12px;padding:5px 10px;border-radius:99px;background:var(--card);border:1px solid var(--bd);color:var(--tx);cursor:pointer}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin:10px 0}
+.row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.name{font-weight:600}.sub{color:var(--mu);font-size:12px}
+.price{font-size:22px;font-weight:700;text-align:right}
+.up{color:var(--up)}.dn{color:var(--dn)}
+.al{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px dashed var(--bd)}
+.al input{width:110px}
+.tag{font-size:12px;padding:3px 8px;border-radius:99px;background:var(--bg);border:1px solid var(--bd)}
+.tag.f{background:var(--dn);color:#fff;border-color:var(--dn)}
+#toasts{position:fixed;top:10px;left:10px;right:10px;z-index:9;display:flex;flex-direction:column;gap:8px;max-width:500px;margin:auto}
+.toast{background:var(--dn);color:#fff;padding:12px;border-radius:10px;box-shadow:0 4px 16px #0004;display:flex;justify-content:space-between;gap:8px}
+.toast button{background:#fff3;padding:2px 8px}
+.note{color:var(--mu);font-size:12px;margin-top:16px}
+</style>
+</head>
+<body>
+<div id="toasts"></div>
+<h1>📈 Stock Alert Tracker</h1>
+<div class="bar">
+  <input id="sym" placeholder="Symbol e.g. AAPL, RELIANCE.NS, ^NSEI" autocapitalize="characters">
+  <button id="add">Add</button>
+</div>
+<div class="chips" id="chips"></div>
+<div class="bar">
+  <button class="g s" id="refresh">↻ Refresh</button>
+  <button class="g s" id="notif">🔔 Enable notifications</button>
+  <label class="sub">Every
+    <select id="intv"><option value="15">15s</option><option value="30" selected>30s</option><option value="60">1m</option><option value="300">5m</option></select>
+  </label>
+  <span class="sub" id="upd"></span>
+</div>
+<div class="card" id="syncbox"></div>
+<div id="list"></div>
+<p class="note">Symbols: US → AAPL, TSLA · India NSE → RELIANCE.NS, TCS.NS · BSE → RELIANCE.BO · Indices → ^NSEI (Nifty 50), ^BSESN (Sensex), ^NSEBANK, ^GSPC, ^DJI, ^IXIC, ^FTSE, ^N225, ^HSI, ^GDAXI. Data: Yahoo Finance (free, may be delayed up to 15 min). Alerts fire only while this page is open. Sync uses a free public store: anyone with your sync code can view your watchlist, so keep it private.</p>
+
+<script>
+const PRESETS=[["^NSEI","Nifty 50"],["^BSESN","Sensex"],["^NSEBANK","Bank Nifty"],["^GSPC","S&P 500"],["^DJI","Dow"],["^IXIC","Nasdaq"],["^FTSE","FTSE 100"],["^N225","Nikkei"],["^HSI","Hang Seng"],["^GDAXI","DAX"],["RELIANCE.NS","Reliance"],["TCS.NS","TCS"],["AAPL","Apple"],["NVDA","Nvidia"]];
+const PROXIES=[u=>"https://corsproxy.io/?url="+encodeURIComponent(u),u=>"https://api.allorigins.win/raw?url="+encodeURIComponent(u)];
+const $=s=>document.querySelector(s);
+let S=[];let timer;
+try{S=JSON.parse(localStorage.getItem("watch")||"[]")}catch(e){}
+const API="https://jsonblob.com/api/jsonBlob";
+let ts=+(localStorage.getItem("ts")||0),syncId=localStorage.getItem("syncId")||"",pushT;
+const items=()=>S.map(s=>({sym:s.sym,alerts:s.alerts||[]}));
+const saveLocal=()=>{try{localStorage.setItem("watch",JSON.stringify(S));localStorage.setItem("ts",ts);localStorage.setItem("syncId",syncId)}catch(e){}};
+const save=()=>{ts=Date.now();saveLocal();clearTimeout(pushT);pushT=setTimeout(push,400)};
+const H={"Content-Type":"application/json",Accept:"application/json"};
+async function push(){
+  if(!syncId)return;
+  try{await fetch(API+"/"+syncId,{method:"PUT",headers:H,body:JSON.stringify({ts,items:items()})});setSync("Synced "+new Date().toLocaleTimeString())}
+  catch(e){setSync("⚠ Sync failed (will retry)")}
+}
+async function pull(){
+  if(!syncId)return;
+  try{
+    const r=await fetch(API+"/"+syncId,{headers:H});if(!r.ok)throw 0;
+    const d=await r.json();
+    if(d.ts>ts){
+      S=d.items.map(it=>({...(S.find(x=>x.sym===it.sym)||{}),sym:it.sym,alerts:it.alerts}));
+      ts=d.ts;saveLocal();render();
+    }else if(d.ts<ts){push()}
+    setSync("Synced "+new Date().toLocaleTimeString());
+  }catch(e){setSync("⚠ Sync failed (will retry)")}
+}
+let syncMsg="";
+function setSync(m){syncMsg=m;const e=$("#syncst");if(e)e.textContent=m}
+function renderSync(){
+  const b=$("#syncbox");
+  if(syncId){
+    b.innerHTML=`<div class="name">☁ Sync is on</div><div class="sub">Open this page on another device → "Link device" → enter this code:</div>
+    <div class="al" style="border:0;margin:6px 0 0;padding:0"><input readonly value="${syncId}" style="flex:1;min-width:200px"><button class="s" id="cp">Copy</button><button class="s g" id="stop">Stop sync</button></div>
+    <div class="sub" id="syncst" style="margin-top:6px">${syncMsg}</div>`;
+    $("#cp").onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(syncId);$("#cp").textContent="Copied"};
+    $("#stop").onclick=()=>{if(confirm("Stop syncing on this device? Your data stays here."))stopSync()};
+  }else{
+    b.innerHTML=`<div class="name">☁ Sync across devices</div><div class="sub">Keep watchlist &amp; alerts the same on phone and PC.</div>
+    <div class="al" style="border:0;margin:6px 0 0;padding:0"><button class="s" id="en">Enable sync</button><input id="code" placeholder="Have a code? Paste it" style="flex:1;min-width:160px"><button class="s g" id="link">Link device</button></div>`;
+    $("#en").onclick=enableSync;
+    $("#link").onclick=linkDevice;
+  }
+}
+async function enableSync(){
+  try{
+    const r=await fetch(API,{method:"POST",headers:H,body:JSON.stringify({ts:ts||Date.now(),items:items()})});
+    const loc=r.headers.get("Location")||r.headers.get("location")||"";
+    const id=loc.split("/").pop();
+    if(!id)throw 0;
+    if(!ts)ts=Date.now();
+    syncId=id;saveLocal();setSync("Synced");renderSync();
+  }catch(e){alert("Couldn't create the sync store. Check your connection and try again.")}
+}
+async function linkDevice(){
+  const id=$("#code").value.trim();if(!id)return;
+  try{
+    const r=await fetch(API+"/"+id,{headers:H});if(!r.ok)throw 0;
+    const d=await r.json();
+    S=d.items.map(it=>({sym:it.sym,alerts:it.alerts}));ts=d.ts;syncId=id;saveLocal();
+    renderSync();render();refresh();
+  }catch(e){alert("Invalid sync code or no connection.")}
+}
+function stopSync(){syncId="";saveLocal();renderSync()}
+
+async function fetchQuote(sym){
+  const url=`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`;
+  for(const p of PROXIES){
+    try{
+      const r=await fetch(p(url));if(!r.ok)continue;
+      const j=await r.json();const m=j.chart&&j.chart.result&&j.chart.result[0]&&j.chart.result[0].meta;
+      if(m&&m.regularMarketPrice!=null)return{price:m.regularMarketPrice,prev:m.chartPreviousClose||m.previousClose,cur:m.currency,name:m.shortName||m.longName||sym,state:m.marketState,ex:m.exchangeName};
+    }catch(e){}
+  }
+  return null;
+}
+function fmt(n,c){if(n==null)return"–";return(c?c+" ":"")+n.toLocaleString(undefined,{maximumFractionDigits:2})}
+
+function beep(){try{const a=new(window.AudioContext||window.webkitAudioContext)();[0,.25,.5].forEach(t=>{const o=a.createOscillator(),g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=880;g.gain.value=.2;o.start(a.currentTime+t);o.stop(a.currentTime+t+.15)})}catch(e){}}
+function fire(s,al){
+  const msg=`${s.name||s.sym} is ${al.dir==="above"?"above":"below"} ${al.target} — now ${fmt(s.price)}`;
+  const t=document.createElement("div");t.className="toast";
+  t.innerHTML=`<span>🚨 ${msg}</span><button>✕</button>`;
+  t.querySelector("button").onclick=()=>t.remove();$("#toasts").appendChild(t);
+  beep();if(navigator.vibrate)navigator.vibrate([200,100,200]);
+  if("Notification"in window&&Notification.permission==="granted"){try{new Notification("Price alert: "+s.sym,{body:msg})}catch(e){}}
+  document.title="🚨 "+s.sym+" alert!";
+}
+function check(s){
+  (s.alerts||[]).forEach(al=>{
+    if(al.fired||s.price==null)return;
+    if((al.dir==="above"&&s.price>=al.target)||(al.dir==="below"&&s.price<=al.target)){al.fired=true;fire(s,al)}
+  });
+}
+async function refresh(){
+  $("#upd").textContent="Updating…";
+  await pull();
+  const before=JSON.stringify(items());
+  await Promise.all(S.map(async s=>{
+    const q=await fetchQuote(s.sym);
+    if(q){Object.assign(s,q);s.err=false;check(s)}else s.err=true;
+  }));
+  if(JSON.stringify(items())!==before)save();else saveLocal();
+  render();
+  $("#upd").textContent="Updated "+new Date().toLocaleTimeString();
+}
+function render(){
+  const L=$("#list");
+  if(!S.length){L.innerHTML='<div class="card sub">No symbols yet. Add one above or tap a preset.</div>';return}
+  L.innerHTML="";
+  S.forEach((s,i)=>{
+    const ch=s.price!=null&&s.prev?s.price-s.prev:null,pc=ch!=null?ch/s.prev*100:null;
+    const cls=ch>=0?"up":"dn";
+    const d=document.createElement("div");d.className="card";
+    d.innerHTML=`<div class="row"><div><div class="name">${s.name||s.sym}</div><div class="sub">${s.sym}${s.ex?" · "+s.ex:""}${s.state?" · "+s.state:""}${s.err?" · ⚠ fetch failed":""}</div></div>
+    <div><div class="price">${fmt(s.price,s.cur)}</div><div class="sub ${cls}" style="text-align:right">${ch!=null?(ch>=0?"▲ ":"▼ ")+ch.toFixed(2)+" ("+pc.toFixed(2)+"%)":""}</div></div></div>
+    <div class="al">
+      <select class="dir"><option value="above">Rises to/above</option><option value="below">Falls to/below</option></select>
+      <input class="tg" type="number" step="any" inputmode="decimal" placeholder="Trigger price">
+      <button class="s addal">+ Alert</button>
+      <button class="s g rm" style="margin-left:auto">Remove</button>
+    </div>
+    <div class="al" style="border:0;margin-top:4px;padding:0">${(s.alerts||[]).map((a,j)=>`<span class="tag ${a.fired?"f":""}">${a.dir==="above"?"≥":"≤"} ${a.target} ${a.fired?"· triggered":""} <a href="#" data-j="${j}" class="${a.fired?"rearm":"del"}" style="color:inherit">${a.fired?"↺":"✕"}</a></span>`).join("")}</div>`;
+    d.querySelector(".addal").onclick=()=>{
+      const v=parseFloat(d.querySelector(".tg").value);if(isNaN(v))return;
+      (s.alerts=s.alerts||[]).push({dir:d.querySelector(".dir").value,target:v,fired:false});
+      check(s);save();render();
+    };
+    d.querySelector(".rm").onclick=()=>{S.splice(i,1);save();render()};
+    d.querySelectorAll(".del").forEach(a=>a.onclick=e=>{e.preventDefault();s.alerts.splice(+a.dataset.j,1);save();render()});
+    d.querySelectorAll(".rearm").forEach(a=>a.onclick=e=>{e.preventDefault();s.alerts[+a.dataset.j].fired=false;document.title="Stock Alert Tracker";save();render()});
+    L.appendChild(d);
+  });
+}
+async function addSym(sym){
+  sym=sym.trim().toUpperCase();if(!sym||S.some(s=>s.sym===sym))return;
+  const q=await fetchQuote(sym);
+  if(!q){alert("Couldn't find '"+sym+"'. Check the symbol format (e.g. RELIANCE.NS, AAPL, ^NSEI).");return}
+  S.push({sym,alerts:[],...q});save();render();
+}
+$("#add").onclick=()=>{addSym($("#sym").value);$("#sym").value=""};
+$("#sym").addEventListener("keydown",e=>{if(e.key==="Enter")$("#add").click()});
+$("#refresh").onclick=refresh;
+$("#notif").onclick=async()=>{if(!("Notification"in window))return alert("Notifications not supported here.");const p=await Notification.requestPermission();$("#notif").textContent=p==="granted"?"🔔 Notifications on":"🔕 Blocked"};
+$("#intv").onchange=()=>{clearInterval(timer);timer=setInterval(refresh,$("#intv").value*1000)};
+PRESETS.forEach(([s,n])=>{const c=document.createElement("span");c.className="chip";c.textContent=n;c.onclick=()=>addSym(s);$("#chips").appendChild(c)});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)document.title="Stock Alert Tracker"});
+renderSync();render();refresh();timer=setInterval(refresh,30000);
+</script>
+</body>
+</html>
