@@ -51,7 +51,7 @@ button.s{padding:5px 9px;font-size:13px}
 </div>
 <div class="card" id="syncbox"></div>
 <div id="list"></div>
-<p class="note">Symbols: US → AAPL, TSLA · India NSE → RELIANCE.NS, TCS.NS · BSE → RELIANCE.BO · Indices → ^NSEI (Nifty 50), ^BSESN (Sensex), ^NSEBANK, ^GSPC, ^DJI, ^IXIC, ^FTSE, ^N225, ^HSI, ^GDAXI. Data: Yahoo Finance (free, may be delayed up to 15 min). Alerts fire only while this page is open. Sync uses a free public store: anyone with your sync code can view your watchlist, so keep it private.</p>
+<p class="note">Symbols: US → AAPL, TSLA · India NSE → RELIANCE.NS, TCS.NS · BSE → RELIANCE.BO · Indices → ^NSEI (Nifty 50), ^BSESN (Sensex), ^NSEBANK, ^GSPC, ^DJI, ^IXIC, ^FTSE, ^N225, ^HSI, ^GDAXI. Data: Yahoo Finance (free, may be delayed up to 15 min). Alerts fire only while this page is open. Sync uses your own free Firebase database: anyone with your sync code can view your watchlist, so keep it private.</p>
 
 <script>
 const PRESETS=[["^NSEI","Nifty 50"],["^BSESN","Sensex"],["^NSEBANK","Bank Nifty"],["^GSPC","S&P 500"],["^DJI","Dow"],["^IXIC","Nasdaq"],["^FTSE","FTSE 100"],["^N225","Nikkei"],["^HSI","Hang Seng"],["^GDAXI","DAX"],["RELIANCE.NS","Reliance"],["TCS.NS","TCS"],["AAPL","Apple"],["NVDA","Nvidia"]];
@@ -59,24 +59,23 @@ const PROXIES=[u=>"https://corsproxy.io/?url="+encodeURIComponent(u),u=>"https:/
 const $=s=>document.querySelector(s);
 let S=[];let timer;
 try{S=JSON.parse(localStorage.getItem("watch")||"[]")}catch(e){}
-const API="https://jsonblob.com/api/jsonBlob";
+const ep=()=>"https://"+syncId+".json";
 let ts=+(localStorage.getItem("ts")||0),syncId=localStorage.getItem("syncId")||"",pushT;
 const items=()=>S.map(s=>({sym:s.sym,alerts:s.alerts||[]}));
 const saveLocal=()=>{try{localStorage.setItem("watch",JSON.stringify(S));localStorage.setItem("ts",ts);localStorage.setItem("syncId",syncId)}catch(e){}};
 const save=()=>{ts=Date.now();saveLocal();clearTimeout(pushT);pushT=setTimeout(push,400)};
-const H={"Content-Type":"application/json",Accept:"application/json"};
 async function push(){
   if(!syncId)return;
-  try{await fetch(API+"/"+syncId,{method:"PUT",headers:H,body:JSON.stringify({ts,items:items()})});setSync("Synced "+new Date().toLocaleTimeString())}
+  try{const r=await fetch(ep(),{method:"PUT",body:JSON.stringify({ts,items:items()})});if(!r.ok)throw 0;setSync("Synced "+new Date().toLocaleTimeString())}
   catch(e){setSync("⚠ Sync failed (will retry)")}
 }
 async function pull(){
   if(!syncId)return;
   try{
-    const r=await fetch(API+"/"+syncId,{headers:H});if(!r.ok)throw 0;
-    const d=await r.json();
+    const r=await fetch(ep());if(!r.ok)throw 0;
+    const d=await r.json();if(!d)throw 0;
     if(d.ts>ts){
-      S=d.items.map(it=>({...(S.find(x=>x.sym===it.sym)||{}),sym:it.sym,alerts:it.alerts}));
+      S=(d.items||[]).map(it=>({...(S.find(x=>x.sym===it.sym)||{}),sym:it.sym,alerts:it.alerts||[]}));
       ts=d.ts;saveLocal();render();
     }else if(d.ts<ts){push()}
     setSync("Synced "+new Date().toLocaleTimeString());
@@ -94,27 +93,31 @@ function renderSync(){
     $("#stop").onclick=()=>{if(confirm("Stop syncing on this device? Your data stays here."))stopSync()};
   }else{
     b.innerHTML=`<div class="name">☁ Sync across devices</div><div class="sub">Keep watchlist &amp; alerts the same on phone and PC.</div>
-    <div class="al" style="border:0;margin:6px 0 0;padding:0"><button class="s" id="en">Enable sync</button><input id="code" placeholder="Have a code? Paste it" style="flex:1;min-width:160px"><button class="s g" id="link">Link device</button></div>`;
+    <div class="al" style="border:0;margin:6px 0 0;padding:0"><button class="s" id="en">Enable sync</button><input id="code" placeholder="Have a sync code? Paste it" style="flex:1;min-width:160px"><button class="s g" id="link">Link device</button></div>`;
     $("#en").onclick=enableSync;
     $("#link").onclick=linkDevice;
   }
 }
 async function enableSync(){
+  let u=prompt("Paste your Firebase Realtime Database URL (e.g. https://myapp-default-rtdb.firebaseio.com). See setup steps below the page.");
+  if(!u)return;
+  u=u.trim().replace(/^https?:\/\//,"").replace(/\/+$/,"");
+  if(!/firebase(io|database)\.(com|app)$/.test(u)){alert("That doesn't look like a Firebase database URL.");return}
+  const code=Array.from(crypto.getRandomValues(new Uint8Array(12)),b=>b.toString(36).padStart(2,"0")).join("").slice(0,20);
+  const key=u+"/sync/"+code;
   try{
-    const r=await fetch(API,{method:"POST",headers:H,body:JSON.stringify({ts:ts||Date.now(),items:items()})});
-    const loc=r.headers.get("Location")||r.headers.get("location")||"";
-    const id=loc.split("/").pop();
-    if(!id)throw 0;
     if(!ts)ts=Date.now();
-    syncId=id;saveLocal();setSync("Synced");renderSync();
-  }catch(e){alert("Couldn't create the sync store. Check your connection and try again.")}
+    const r=await fetch("https://"+key+".json",{method:"PUT",body:JSON.stringify({ts,items:items()})});
+    if(!r.ok)throw 0;
+    syncId=key;saveLocal();setSync("Synced");renderSync();
+  }catch(e){alert("Couldn't write to that database. Check the URL and that the rules from the setup steps are published.")}
 }
 async function linkDevice(){
-  const id=$("#code").value.trim();if(!id)return;
+  const key=$("#code").value.trim().replace(/^https?:\/\//,"");if(!key)return;
   try{
-    const r=await fetch(API+"/"+id,{headers:H});if(!r.ok)throw 0;
-    const d=await r.json();
-    S=d.items.map(it=>({sym:it.sym,alerts:it.alerts}));ts=d.ts;syncId=id;saveLocal();
+    const r=await fetch("https://"+key+".json");if(!r.ok)throw 0;
+    const d=await r.json();if(!d)throw 0;
+    S=(d.items||[]).map(it=>({sym:it.sym,alerts:it.alerts||[]}));ts=d.ts;syncId=key;saveLocal();
     renderSync();render();refresh();
   }catch(e){alert("Invalid sync code or no connection.")}
 }
