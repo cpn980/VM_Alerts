@@ -92,7 +92,9 @@ function renderSync(){
   if(syncId){
     b.innerHTML=`<div class="name">☁ Sync is on</div><div class="sub">Open this page on another device → "Link device" → enter this code:</div>
     <div class="al" style="border:0;margin:6px 0 0;padding:0"><input readonly value="${syncId}" style="flex:1;min-width:200px"><button class="s" id="cp">Copy</button><button class="s g" id="stop">Stop sync</button></div>
+    <label class="sub" style="display:block;margin-top:8px"><input type="checkbox" id="srv" style="width:auto;padding:0" ${localStorage.getItem("srv")==="1"?"checked":""}> Server sends alerts (this page won't fire them, so Telegram always gets them)</label>
     <div class="sub" id="syncst" style="margin-top:6px">${syncMsg}</div>`;
+    $("#srv").onchange=e=>{localStorage.setItem("srv",e.target.checked?"1":"0")};
     $("#cp").onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(syncId);$("#cp").textContent="Copied"};
     $("#stop").onclick=()=>{if(confirm("Stop syncing on this device? Your data stays here."))stopSync()};
   }else{
@@ -158,6 +160,7 @@ function fire(s,al){
   document.title="🚨 "+s.sym+" alert!";
 }
 function check(s){
+  if(syncId&&localStorage.getItem("srv")==="1")return;
   (s.alerts||[]).forEach(al=>{
     if(al.fired||s.price==null)return;
     if((al.dir==="above"&&s.price>=al.target)||(al.dir==="below"&&s.price<=al.target)){al.fired=true;fire(s,al)}
