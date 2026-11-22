@@ -8,7 +8,7 @@
 :root{--bg:#f5f6f8;--card:#fff;--tx:#14171c;--mu:#6b7280;--bd:#e3e6ea;--up:#0a8f4e;--dn:#d63a3a;--ac:#2563eb}
 @media(prefers-color-scheme:dark){:root{--bg:#0e1116;--card:#171b22;--tx:#e8ebf0;--mu:#8b93a1;--bd:#262c36;--up:#35c47c;--dn:#ff6b6b;--ac:#5b8def}}
 *{box-sizing:border-box}
-body{margin:0;font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--tx);padding:12px;max-width:900px;margin:auto}
+body{margin:0;font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--tx);padding:12px;max-width:1000px;margin:auto}
 h1{font-size:20px;margin:6px 0}
 .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
 input,select,button{font:inherit;padding:9px 10px;border-radius:8px;border:1px solid var(--bd);background:var(--card);color:var(--tx)}
@@ -30,6 +30,13 @@ button.s{padding:5px 9px;font-size:13px}
 #toasts{position:fixed;top:10px;left:10px;right:10px;z-index:9;display:flex;flex-direction:column;gap:8px;max-width:500px;margin:auto}
 .toast{background:var(--dn);color:#fff;padding:12px;border-radius:10px;box-shadow:0 4px 16px #0004;display:flex;justify-content:space-between;gap:8px}
 .toast button{background:#fff3;padding:2px 8px}
+.tw{overflow-x:auto;background:var(--card);border:1px solid var(--bd);border-radius:12px}
+table{border-collapse:collapse;width:100%;min-width:520px}
+th{text-align:left;font-size:12px;color:var(--mu);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--bd);white-space:nowrap}
+td{padding:9px 10px;border-bottom:1px solid var(--bd);vertical-align:top;font-size:14px}
+tr:last-child td{border-bottom:0}
+td.ac{white-space:nowrap;text-align:right}
+@media(max-width:600px){td,th{padding:7px 6px;font-size:13px}}
 .note{color:var(--mu);font-size:12px;margin-top:16px}
 </style>
 </head>
@@ -51,10 +58,23 @@ button.s{padding:5px 9px;font-size:13px}
   <span class="sub" id="upd"></span>
 </div>
 <div class="card" id="syncbox"></div>
-<div id="list"></div>
+<div class="card" id="trg">
+  <div class="name">Set a trigger</div>
+  <div class="al" style="border:0;margin:8px 0 0;padding:0">
+    <select id="tsym" style="flex:1;min-width:140px"></select>
+    <select id="tdir"><option value="above">Rises to/above</option><option value="below">Falls to/below</option></select>
+    <input id="tprice" type="number" step="any" inputmode="decimal" placeholder="Trigger price">
+    <button id="tadd">Set trigger</button>
+  </div>
+  <div class="sub" id="thint" style="margin-top:6px"></div>
+</div>
+<div class="bar"><b>All triggers</b>
+  <select id="flt"><option value="all">All</option><option value="wait">Waiting</option><option value="fired">Triggered</option></select>
+  <span class="sub" id="cnt"></span></div>
+<div class="tw"><table id="tbl"></table></div>
 <p class="note"><b>Data proxy:</b> public proxies are unreliable. For stable prices, create a free Cloudflare Worker (dash.cloudflare.com → Workers &amp; Pages → Create → Hello World → Edit code), paste the code below, Deploy, then tap ⚙ Proxy and paste the worker URL.</p>
 <pre class="note" style="white-space:pre-wrap;background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:10px;user-select:all">export default{async fetch(req){const u=new URL(req.url).searchParams.get("url");if(!u||!/^https:\/\/query[12]\.finance\.yahoo\.com\//.test(u))return new Response("bad request",{status:400});const r=await fetch(u,{headers:{"User-Agent":"Mozilla/5.0"}});return new Response(r.body,{status:r.status,headers:{"Access-Control-Allow-Origin":"*","Content-Type":"application/json"}})}}</pre>
-<p class="note">Symbols: US → AAPL, TSLA · India NSE → RELIANCE.NS, TCS.NS · BSE → RELIANCE.BO · Indices → ^NSEI (Nifty 50), ^BSESN (Sensex), ^NSEBANK, ^GSPC, ^DJI, ^IXIC, ^FTSE, ^N225, ^HSI, ^GDAXI. Data: Yahoo Finance (free, may be delayed up to 15 min). Alerts fire only while this page is open. Sync uses your own free Firebase database: anyone with your sync code can view your watchlist, so keep it private.</p>
+<p class="note">Symbols: US → AAPL, TSLA · India NSE → RELIANCE.NS, TCS.NS · BSE → RELIANCE.BO · Indices → ^NSEI (Nifty 50), ^BSESN (Sensex), ^NSEBANK, ^GSPC, ^DJI, ^IXIC, ^FTSE, ^N225, ^HSI, ^GDAXI. Data: Yahoo Finance (free, may be delayed up to 15 min). Phone alerts work through your Cloudflare worker + Telegram; browser alerts only while this page is open. Sync uses your own free Firebase database: anyone with your sync code can view your watchlist, so keep it private.</p>
 
 <script>
 const PRESETS=[["^NSEI","Nifty 50"],["^BSESN","Sensex"],["^NSEBANK","Bank Nifty"],["^GSPC","S&P 500"],["^DJI","Dow"],["^IXIC","Nasdaq"],["^FTSE","FTSE 100"],["^N225","Nikkei"],["^HSI","Hang Seng"],["^GDAXI","DAX"],["RELIANCE.NS","Reliance"],["TCS.NS","TCS"],["AAPL","Apple"],["NVDA","Nvidia"]];
@@ -178,39 +198,64 @@ async function refresh(){
   render();
   $("#upd").textContent="Updated "+new Date().toLocaleTimeString();
 }
-function render(){
-  const L=$("#list");
-  if(!S.length){L.innerHTML='<div class="card sub">No symbols yet. Add one above or tap a preset.</div>';return}
-  L.innerHTML="";
-  S.forEach((s,i)=>{
-    const ch=s.price!=null&&s.prev?s.price-s.prev:null,pc=ch!=null?ch/s.prev*100:null;
-    const cls=ch>=0?"up":"dn";
-    const d=document.createElement("div");d.className="card";
-    d.innerHTML=`<div class="row"><div><div class="name">${s.name||s.sym}</div><div class="sub">${s.sym}${s.ex?" · "+s.ex:""}${s.state?" · "+s.state:""}${s.err?" · ⚠ fetch failed":""}</div></div>
-    <div><div class="price">${fmt(s.price,s.cur)}</div><div class="sub ${cls}" style="text-align:right">${ch!=null?(ch>=0?"▲ ":"▼ ")+ch.toFixed(2)+" ("+pc.toFixed(2)+"%)":""}</div></div></div>
-    <div class="al">
-      <select class="dir"><option value="above">Rises to/above</option><option value="below">Falls to/below</option></select>
-      <input class="tg" type="number" step="any" inputmode="decimal" placeholder="Trigger price">
-      <button class="s addal">+ Alert</button>
-      <button class="s g rm" style="margin-left:auto">Remove</button>
-    </div>
-    <div class="al" style="border:0;margin-top:4px;padding:0">${(s.alerts||[]).map((a,j)=>`<span class="tag ${a.fired?"f":""}">${a.dir==="above"?"≥":"≤"} ${a.target} ${a.fired?"· triggered":""} <a href="#" data-j="${j}" class="${a.fired?"rearm":"del"}" style="color:inherit">${a.fired?"↺":"✕"}</a></span>`).join("")}</div>`;
-    d.querySelector(".addal").onclick=()=>{
-      const v=parseFloat(d.querySelector(".tg").value);if(isNaN(v))return;
-      (s.alerts=s.alerts||[]).push({dir:d.querySelector(".dir").value,target:v,fired:false});
-      check(s);save();render();
-    };
-    d.querySelector(".rm").onclick=()=>{S.splice(i,1);save();render()};
-    d.querySelectorAll(".del").forEach(a=>a.onclick=e=>{e.preventDefault();s.alerts.splice(+a.dataset.j,1);save();render()});
-    d.querySelectorAll(".rearm").forEach(a=>a.onclick=e=>{e.preventDefault();s.alerts[+a.dataset.j].fired=false;document.title="Stock Alert Tracker";save();render()});
-    L.appendChild(d);
-  });
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function hint(){const s=S.find(x=>x.sym===$("#tsym").value);$("#thint").textContent=s&&s.price!=null?"Current price: "+fmt(s.price,s.cur):""}
+function renderForm(){
+  const sel=$("#tsym"),cur=sel.value;
+  sel.innerHTML=S.length?S.map(s=>`<option value="${esc(s.sym)}">${esc(s.name&&s.name!==s.sym?s.name+" ("+s.sym+")":s.sym)}</option>`).join(""):'<option value="">Add a stock first</option>';
+  if(S.some(s=>s.sym===cur))sel.value=cur;
+  hint();
 }
+function render(){
+  renderForm();
+  const f=$("#flt").value;let rows="",n=0;
+  S.forEach((s,i)=>{
+    const ch=s.price!=null&&s.prev?s.price-s.prev:null,pc=ch!=null?ch/s.prev*100:null,cls=ch>=0?"up":"dn";
+    const stock=`<div class="name">${esc(s.name||s.sym)}</div><div class="sub">${esc(s.sym)}${s.state?" · "+esc(s.state):""}${s.err?" · ⚠ fetch failed":""}</div>`;
+    const px=`<div>${fmt(s.price,s.cur)}</div><div class="sub ${cls}">${ch!=null?(ch>=0?"▲ ":"▼ ")+pc.toFixed(2)+"%":""}</div>`;
+    const al=s.alerts||[];
+    if(!al.length){
+      if(f==="all"){n++;rows+=`<tr><td>${stock}</td><td>${px}</td><td colspan="3" class="sub">No trigger set</td><td class="ac"><button class="s" data-a="set" data-i="${i}">+ Trigger</button> <button class="s g" data-a="rms" data-i="${i}" title="Remove stock">🗑</button></td></tr>`}
+      return;
+    }
+    al.forEach((a,j)=>{
+      if((f==="wait"&&a.fired)||(f==="fired"&&!a.fired))return;
+      n++;
+      const met=s.price!=null&&(a.dir==="above"?s.price>=a.target:s.price<=a.target);
+      const d=s.price?Math.abs((a.target-s.price)/s.price*100).toFixed(2)+"% away":"";
+      rows+=`<tr><td>${stock}</td><td>${px}</td><td>${a.dir==="above"?"▲ Above":"▼ Below"}</td><td><div>${fmt(a.target)}</div><div class="sub">${a.fired?"":met?"price crossed":d}</div></td><td><span class="tag ${a.fired?"f":""}">${a.fired?"Triggered":"Waiting"}</span></td><td class="ac">${a.fired?`<button class="s g" data-a="re" data-i="${i}" data-j="${j}" title="Re-arm">↺</button> `:""}<button class="s g" data-a="del" data-i="${i}" data-j="${j}" title="Delete trigger">🗑</button></td></tr>`;
+    });
+  });
+  $("#cnt").textContent=n+(n===1?" row":" rows");
+  $("#tbl").innerHTML='<thead><tr><th>Stock</th><th>Price</th><th>Condition</th><th>Trigger</th><th>Status</th><th></th></tr></thead><tbody>'+
+    (rows||`<tr><td colspan="6" class="sub">${S.length?"Nothing to show for this filter.":"No stocks yet. Add one above, then set a trigger."}</td></tr>`)+'</tbody>';
+}
+$("#tbl").onclick=e=>{
+  const b=e.target.closest("button");if(!b)return;
+  const i=+b.dataset.i,j=+b.dataset.j,s=S[i],a=b.dataset.a;if(!s)return;
+  if(a==="set"){$("#tsym").value=s.sym;hint();$("#trg").scrollIntoView({behavior:"smooth",block:"center"});$("#tprice").focus()}
+  else if(a==="re"){s.alerts[j].fired=false;document.title="Stock Alert Tracker";save();render()}
+  else if(a==="del"){
+    if(!confirm("Delete this trigger?"))return;
+    s.alerts.splice(j,1);
+    if(!s.alerts.length&&confirm("No triggers left for "+s.sym+". Remove the stock from the list too?"))S.splice(i,1);
+    save();render();
+  }else if(a==="rms"){if(confirm("Remove "+s.sym+" from the list?")){S.splice(i,1);save();render()}}
+};
+$("#tadd").onclick=()=>{
+  const s=S.find(x=>x.sym===$("#tsym").value),v=parseFloat($("#tprice").value);
+  if(!s)return alert("Add a stock first.");
+  if(isNaN(v))return alert("Enter a trigger price.");
+  (s.alerts=s.alerts||[]).push({dir:$("#tdir").value,target:v,fired:false});
+  $("#tprice").value="";check(s);save();render();
+};
+$("#tsym").onchange=hint;
+$("#flt").onchange=render;
 async function addSym(sym){
   sym=sym.trim().toUpperCase();if(!sym||S.some(s=>s.sym===sym))return;
   const q=await fetchQuote(sym);
   if(!q){alert("Couldn't get a price for '"+sym+"'. Either the symbol is wrong, or the free public data proxies are blocked/busy. If AAPL also fails, tap ⚙ Proxy and set up your own free Cloudflare Worker (steps below the page).");return}
-  S.push({sym,alerts:[],...q});save();render();
+  S.push({sym,alerts:[],...q});save();render();$("#tsym").value=sym;hint();$("#trg").scrollIntoView({behavior:"smooth",block:"center"});$("#tprice").focus();
 }
 $("#add").onclick=()=>{addSym($("#sym").value);$("#sym").value=""};
 $("#sym").addEventListener("keydown",e=>{if(e.key==="Enter")$("#add").click()});
